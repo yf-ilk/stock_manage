@@ -77,7 +77,7 @@
       document.getElementById('app').innerHTML = html;
     }
 
-    async function init() {
+    async function init(retry = 0) {
       if (!palettoId) {
         render('<p style="color:red;margin-top:40px">エラー：パレットIDが指定されていません。</p>');
         return;
@@ -89,7 +89,12 @@
         else if (data.status === '完了') showKanryo(data);
         else showShukko(data);
       } catch(e) {
-        render(`<p style="color:red;margin-top:40px">通信エラー：${e.message || String(e)}</p>`);
+        if (retry === 0) {
+          render('<p id="loading">再接続中...</p>');
+          setTimeout(() => init(1), 2000);
+        } else {
+          render('<p style="color:red;margin-top:40px">通信エラーが発生しました。<br>時間をおいて再度お試しください。</p>');
+        }
       }
     }
 
