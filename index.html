@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>在庫管理</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 24px; max-width: 400px; margin: 0 auto; color: #333; }
+    h2 { margin-bottom: 8px; font-size: 20px; }
+    .info { border-radius: 8px; padding: 16px; margin: 16px 0; line-height: 1.8; }
+    .info-blue { background: #e8f0fe; }
+    .info-red  { background: #fce8e6; }
+    label { display: block; margin-top: 12px; font-weight: bold; }
+    select, input, textarea {
+      width: 100%; padding: 8px; margin-top: 4px;
+      font-size: 15px; border: 1px solid #ddd; border-radius: 4px;
+    }
+    .btn {
+      width: 100%; padding: 14px; font-size: 16px;
+      border: none; border-radius: 8px; cursor: pointer; margin-top: 12px;
+    }
+    .btn-blue { background: #1a73e8; color: white; }
+    .btn-red  { background: #d93025; color: white; }
+    .btn-gray { background: #f1f3f4; color: #555; }
+    .err { color: #d93025; font-weight: bold; margin-top: 8px; font-size: 14px; }
+    #loading { text-align: center; margin-top: 60px; color: #888; font-size: 16px; }
+    hr { margin-top: 32px; border: none; border-top: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <div id="app"><p id="loading">読み込み中...</p></div>
+  <script>
+    // ===== GASのウェブアプリURL（デプロイURL）=====
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyyDsTtQHMQC_dhC4xVh25diZ6MA9drLc-DkjQJZkWf8yumpGYDM9GspckWdAPH9cKiDw/exec';
+    // ===============================================
+
+    const params    = new URLSearchParams(location.search);
+    const palettoId = params.get('id') || '';
+
+    function jsonp(url) {
+      return new Promise((resolve, reject) => {
+        const cbName = 'cb_' + Date.now();
+        const script = document.createElement('script');
+        const timer = setTimeout(() => {
+          delete window[cbName];
+          document.head.removeChild(script);
+          reject(new Error('Timeout'));
+        }, 15000);
+        window[cbName] = (data) => {
+          clearTimeout(timer);
+          delete window[cbName];
+          document.head.removeChild(script);
+          resolve(data);
+        };
+        script.onerror = () => {
+          clearTimeout(timer);
+          delete window[cbName];
+          document.head.removeChild(script);
+          reject(new Error('Load error'));
+        };
+        script.src = url + '&callback=' + cbName;
+        document.head.appendChild(script);
+      });
+    }
+
+    function api(action, extra = {}) {
+      const url = new URL(GAS_URL);
+      url.searchParams.set('id', palettoId);
+      url.searchParams.set('action', action);
+      Object.entries(extra).forEach(([k, v]) => url.searchParams.set(k, v));
+      return jsonp(url.toString());
+    }
+
+    function render(html) {
+      document.getElementById('app').innerHTML = html;
+    }
+
+    async function init() {
+      if (!palettoId) {
+        render('<p style="color:red;margin-top:40px">エラー：パレットIDが指定されていません。</p>');
+        return;
+      }
+      try {
+        const data = await api('getData');
+        if (!data.ok) { render(`<p style="color:red;margin-top:40px">エラー：${data.message}</p>`); return; }
+        if (data.status === '未開封') showKaifuu(data);
+        else if (data.status === '完了') showKanryo(data);
+        else showShukko(data);
+      } catch(e) {
+        render('<p style="color:red;margin-top:40px">通信エラーが発生しました。<br>時間をおいて再度お試しください。</p>');
+      }
+    }
+
+    function showKanryo(data) {
+      render(`
+        <div style="text-align:center;margin-top:60px">
+          <div style="font-size:48px">📦</div>
+          <h2 style="color:#5f6368;margin-top:12px">使い切り済み</h2>
+          <div class="info info-blue" style="text-align:left;margin-top:20px">
+            <div><b>パレットID</b>：${data.palettoId}</div>
+            <div><b>商品名</b>：${data.shohinmei}</div>
+            <div><b>ステータス</b>：完了</div>
+          </div>
+          <p style="color:#888;font-size:14px;margin-top:16px">このパレットの在庫はすべて出庫済みです。</p>
+        </div>
+      `);
+    }
+
+    function showKaifuu(data) {
+      render(`
+        <h2 style="color:#d93025">開封確認</h2>
+        <div class="info info-red">
+          <div><b>パレットID</b>：${data.palettoId}</div>
+          <div><b>商品名</b>：${data.shohinmei}</div>
+          <div><b>ステータス</b>：未開封</div>
+        </div>
+        <p>このパレットを開封しますか？</p>
+        <button class="btn btn-red" onclick="doKaifuu()">開封する</button>
+        <button class="btn btn-gray" onclick="history.back()">キャンセル</button>
+      `);
+    }
+
+    async function doKaifuu() {
+      render('<p id="loading">処理中...</p>');
+      try {
+        const data = await api('kaifuu');
+        if (!data.ok) { render(`<p style="color:red">エラー：${data.message}</p>`); return; }
+        showShukko({ palettoId, shohinmei: data.shohinmei, zaikoHako: data.zaikoHako });
+      } catch(e) {
+        render('<p style="color:red">通信エラーが発生しました。</p>');
+      }
+    }
+
+    function showShukko(data) {
+      render(`
+        <h2 style="color:#1a73e8">出庫登録</h2>
+        <div class="info info-blue">
+          <div><b>パレットID</b>：${data.palettoId}</div>
+          <div><b>商品名</b>：${data.shohinmei}</div>
+          <div><b>現在庫</b>：${data.zaikoHako} 箱</div>
+        </div>
+        <label>操作種別</label>
+        <select id="shubetsu" onchange="onShubetsuChange(this)">
+          <option value="hasuu_idou">端数エリアへ移動</option>
+          <option value="shukka">出荷</option>
+        </select>
+        <label>数量（箱）</label>
+        <input type="number" id="suryoHako" min="0" value="0">
+        <div id="honRow" style="display:none">
+          <label>数量（本）</label>
+          <input type="number" id="suryoHon" min="0" value="0">
+        </div>
+        <label>備考</label>
+        <textarea id="bikou" rows="2"></textarea>
+        <div id="err" class="err"></div>
+        <button class="btn btn-blue" onclick="doShukko()">登録する</button>
+        <hr>
+        <button class="btn btn-gray" style="margin-top:16px;font-size:14px" onclick="doReset()">未開封に戻す</button>
+      `);
+    }
+
+    function onShubetsuChange(el) {
+      document.getElementById('honRow').style.display = el.value === 'shukka' ? 'block' : 'none';
+    }
+
+    async function doShukko() {
+      const hako     = parseInt(document.getElementById('suryoHako').value) || 0;
+      const honEl    = document.getElementById('suryoHon');
+      const hon      = honEl ? parseInt(honEl.value) || 0 : 0;
+      const shubetsu = document.getElementById('shubetsu').value;
+      const bikou    = document.getElementById('bikou').value;
+
+      if (hako === 0 && hon === 0) {
+        document.getElementById('err').textContent = '数量を入力してください';
+        return;
+      }
+
+      render('<p id="loading">処理中...</p>');
+      try {
+        const data = await api('shukko', { shukkoShubetsu: shubetsu, suryoHako: hako, suryoHon: hon, bikou });
+        showResult(data.ok, data.ok ? '出庫を記録しました' : data.message);
+      } catch(e) {
+        render('<p style="color:red">通信エラーが発生しました。</p>');
+      }
+    }
+
+    async function doReset() {
+      if (!confirm(`${palettoId} を未開封に戻しますか？\n※出庫履歴はそのまま残ります。`)) return;
+      render('<p id="loading">処理中...</p>');
+      try {
+        const data = await api('reset');
+        showResult(data.ok, data.ok ? '未開封に戻しました' : data.message);
+      } catch(e) {
+        render('<p style="color:red">通信エラーが発生しました。</p>');
+      }
+    }
+
+    function showResult(ok, message) {
+      render(`
+        <div style="text-align:center;margin-top:60px">
+          <div style="font-size:48px">${ok ? '✓' : '✕'}</div>
+          <h2 style="color:${ok ? '#1a73e8' : '#d93025'};margin-top:12px">${ok ? '完了' : 'エラー'}</h2>
+          <p style="margin-top:12px;color:#555">${message}</p>
+          <button class="btn btn-gray" style="margin-top:32px" onclick="init()">続けて登録する</button>
+        </div>
+      `);
+    }
+
+    init();
+  </script>
+</body>
+</html>
